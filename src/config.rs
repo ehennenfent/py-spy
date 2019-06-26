@@ -1,6 +1,6 @@
 use clap::{App, Arg};
 use failure::Error;
-use read_process_memory::Pid;
+use remoteprocess::Pid;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -9,22 +9,32 @@ pub struct Config {
 
     pub dump: bool,
     pub flame_file_name: Option<String>,
+    pub stacks_file_name: Option<String>,
 
     pub non_blocking: bool,
     pub show_line_numbers: bool,
     pub sampling_rate: u64,
     pub duration: u64,
+    pub native: bool
 }
 
 impl Config {
     pub fn from_commandline() -> Result<Config, Error> {
+        // we don't yet support native tracing on 32 bit linux
+        let allow_native = cfg!(unwind);
+
         let matches = App::new("py-spy")
-            .version("0.1.10")
+            .version("0.2.0.dev0")
             .about("A sampling profiler for Python programs")
             .arg(Arg::with_name("function")
                 .short("F")
                 .long("function")
                 .help("Aggregate samples by function name instead of by line number"))
+            .arg(Arg::with_name("native")
+                .short("n")
+                .long("native")
+                .hidden(!allow_native)
+                .help("Collect stack traces from native extensions written in Cython, C or C++"))
             .arg(Arg::with_name("pid")
                 .short("p")
                 .long("pid")
@@ -45,6 +55,12 @@ impl Config {
                 .value_name("flamefile")
                 .help("Generate a flame graph and write to a file")
                 .takes_value(true))
+            .arg(Arg::with_name("stacks")
+                .short("s")
+                .long("stacks")
+                .value_name("stacksfile")
+                .help("Write intermediate flame graph stacks to a file")
+                .takes_value(true))
             .arg(Arg::with_name("rate")
                 .short("r")
                 .long("rate")
@@ -59,7 +75,6 @@ impl Config {
                 .help("The number of seconds to sample for when generating a flame graph")
                 .default_value("2")
                 .takes_value(true))
-
             .arg(Arg::with_name("python_program")
                 .help("commandline of a python program to run")
                 .multiple(true)
@@ -75,6 +90,7 @@ impl Config {
 
         // what to generate
         let flame_file_name = matches.value_of("flame").map(|f| f.to_owned());
+        let stacks_file_name = matches.value_of("stacks").map(|f| f.to_owned());
         let dump = matches.occurrences_of("dump") > 0;
 
         // how to sample
@@ -82,9 +98,15 @@ impl Config {
         let duration = value_t!(matches, "duration", u64)?;
         let show_line_numbers = matches.occurrences_of("function") == 0;
         let non_blocking = matches.occurrences_of("nonblocking") > 0;
+        let mut native = matches.occurrences_of("native") > 0;
 
-        Ok(Config{pid, python_program, dump, flame_file_name,
+        if !allow_native && native {
+            error!("Native stack traces are not yet supported on this OS. Disabling");
+            native = false;
+        }
+
+        Ok(Config{pid, python_program, dump, flame_file_name, stacks_file_name,
                   sampling_rate, duration,
-                  show_line_numbers, non_blocking})
+                  show_line_numbers, non_blocking, native})
     }
 }
